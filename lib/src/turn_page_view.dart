@@ -67,13 +67,16 @@ class TurnPageView extends StatefulWidget {
   State<TurnPageView> createState() => _TurnPageViewState();
 }
 
-class _TurnPageViewState extends State<TurnPageView>
-    with TickerProviderStateMixin {
+class _TurnPageViewState extends State<TurnPageView> with TickerProviderStateMixin {
   late List<Widget> pages;
+
+  bool _showStack = false;
+  bool _postFrameScheduled = false;
 
   @override
   void initState() {
     super.initState();
+
     widget.controller
       .._animation = TurnAnimationController(
         vsync: this,
@@ -84,13 +87,14 @@ class _TurnPageViewState extends State<TurnPageView>
       )
       ..onTap = widget.onTap
       ..onSwipe = widget.onSwipe;
+
     generatePages();
   }
 
   void generatePages() {
     pages = List.generate(
       widget.itemCount,
-      (index) {
+          (index) {
         final pageIndex = (widget.itemCount - 1) - index;
         final animation = widget.controller._animation._controllers[pageIndex];
         final page = widget.itemBuilder(context, pageIndex);
@@ -100,14 +104,9 @@ class _TurnPageViewState extends State<TurnPageView>
           child: page,
           builder: (context, child) => TurnPageAnimation(
             animation: animation,
-            overleafColor: widget.overleafColorBuilder?.call(pageIndex) ??
-                defaultOverleafColor,
-            overleafBorderColor:
-                widget.overleafBorderColorBuilder?.call(pageIndex) ??
-                    defaultOverleafBorderColor,
-            overleafBorderWidth:
-                widget.overleafBorderWidthBuilder?.call(pageIndex) ??
-                    defaultOverleafBorderWidth,
+            overleafColor: widget.overleafColorBuilder?.call(pageIndex) ?? defaultOverleafColor,
+            overleafBorderColor: widget.overleafBorderColorBuilder?.call(pageIndex) ?? defaultOverleafBorderColor,
+            overleafBorderWidth: widget.overleafBorderWidthBuilder?.call(pageIndex) ?? defaultOverleafBorderWidth,
             animationTransitionPoint: widget.animationTransitionPoint,
             direction: widget.controller.direction,
             child: child ?? page,
@@ -119,8 +118,10 @@ class _TurnPageViewState extends State<TurnPageView>
 
   @override
   void didUpdateWidget(TurnPageView oldWidget) {
-    if (oldWidget.itemBuilder != widget.itemBuilder) {
+    if (oldWidget.itemBuilder != widget.itemBuilder || oldWidget.itemCount != widget.itemCount) {
       generatePages();
+      _showStack = false;
+      _postFrameScheduled = false;
     }
     super.didUpdateWidget(oldWidget);
   }
@@ -133,38 +134,55 @@ class _TurnPageViewState extends State<TurnPageView>
 
   @override
   Widget build(BuildContext context) {
+    if (!_postFrameScheduled) {
+      _postFrameScheduled = true;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        setState(() => _showStack = true);
+      });
+    }
+
     final controller = widget.controller;
 
     return LayoutBuilder(
-      builder: (context, constraints) => GestureDetector(
-        onTapUp: (details) async {
-          if (!widget.useOnTap) {
-            return;
-          }
-          controller._onTapUp(
-            details: details,
-            constraints: constraints,
-          );
-        },
-        onHorizontalDragUpdate: (details) {
-          if (!widget.useOnSwipe) {
-            return;
-          }
-          controller._onHorizontalDragUpdate(
-            details: details,
-            constraints: constraints,
-          );
-        },
-        onHorizontalDragEnd: (_) {
-          if (!widget.useOnSwipe) {
-            return;
-          }
-          controller._onHorizontalDragEnd();
-        },
-        child: Stack(
-          children: pages,
-        ),
-      ),
+      builder: (context, constraints) {
+        final initialIndex = controller.initialPage.clamp(0, widget.itemCount - 1);
+        final initialPage = widget.itemBuilder(context, initialIndex);
+
+        return GestureDetector(
+          onTapUp: (details) async {
+            if (!widget.useOnTap) return;
+            controller._onTapUp(details: details, constraints: constraints);
+          },
+          onHorizontalDragUpdate: (details) {
+            if (!widget.useOnSwipe) return;
+            controller._onHorizontalDragUpdate(details: details, constraints: constraints);
+          },
+          onHorizontalDragEnd: (_) {
+            if (!widget.useOnSwipe) return;
+            controller._onHorizontalDragEnd();
+          },
+          child: Stack(
+            fit: StackFit.expand,
+            children: [
+              Visibility(
+                visible: _showStack,
+                maintainState: true,
+                maintainAnimation: true,
+                maintainSize: true,
+                child: Stack(children: pages),
+              ),
+
+              if (!_showStack)
+                Positioned.fill(
+                  child: IgnorePointer(
+                    child: initialPage,
+                  ),
+                ),
+            ],
+          ),
+        );
+      },
     );
   }
 }
